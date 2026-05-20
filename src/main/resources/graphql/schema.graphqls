@@ -1,0 +1,274 @@
+# =====================================================
+# GraphQL Pagination Demo Schema
+# Demonstrates: Cursor-based & Offset-based pagination
+# =====================================================
+
+# ----- Shared PageInfo Types -----
+
+type ProductPageInfo {
+    hasNextPage: Boolean!
+    hasPreviousPage: Boolean!
+    startCursor: String
+    endCursor: String
+    totalPages: Int!
+    currentPage: Int!
+}
+
+type ActivityPageInfo {
+    hasNextPage: Boolean!
+    hasPreviousPage: Boolean!
+    startCursor: String
+    endCursor: String
+}
+
+type UserPageInfo {
+    hasNextPage: Boolean!
+    hasPreviousPage: Boolean!
+    startCursor: String
+    endCursor: String
+    totalPages: Int!
+    currentPage: Int!
+}
+
+# ----- Product (E-commerce) Types -----
+
+type Product {
+    id: ID!
+    name: String!
+    description: String!
+    price: Float!
+    category: String!
+    brand: String!
+    rating: Float!
+    stockCount: Int!
+    imageUrl: String!
+    createdAt: String!
+}
+
+type ProductEdge {
+    node: Product!
+    cursor: String!
+}
+
+type CategoryFacet {
+    name: String!
+    count: Int!
+}
+
+type PriceRange {
+    min: Float!
+    max: Float!
+    average: Float!
+}
+
+type ProductConnection {
+    edges: [ProductEdge!]!
+    nodes: [Product!]!
+    pageInfo: ProductPageInfo!
+    totalCount: Int!
+    isEmpty: Boolean!
+    categoryFacets: [CategoryFacet!]!
+    priceRange: PriceRange!
+}
+
+# ----- Activity Feed Types -----
+
+enum ActivityType {
+    PURCHASE
+    REVIEW
+    WISHLIST
+    VIEW
+    SHARE
+    FOLLOW
+}
+
+
+type ActivityFeedMeta {
+    unreadCount: Int!
+    lastViewedTimestamp: String
+    totalActivities: Int!
+}
+
+type Activity {
+    id: ID!
+    userId: ID!
+    username: String!
+    activityType: ActivityType!
+    description: String!
+    targetId: String
+    targetName: String
+    timestamp: String!
+    metadata: String
+}
+
+type ActivityEdge {
+    node: Activity!
+    cursor: String!
+    relationshipNote: String
+}
+
+type ActivityConnection {
+    edges: [ActivityEdge!]!
+    nodes: [Activity!]!
+    pageInfo: ActivityPageInfo!
+    totalCount: Int!
+    isEmpty: Boolean!
+    feedMeta: ActivityFeedMeta!
+}
+
+
+# ----- Admin User Types -----
+
+enum UserStatus {
+    ACTIVE
+    INACTIVE
+    SUSPENDED
+    PENDING
+}
+
+type User {
+    id: ID!
+    username: String!
+    email: String!
+    fullName: String!
+    status: UserStatus!
+    role: String!
+    createdAt: String!
+    lastLoginAt: String
+    orderCount: Int!
+    totalSpent: Float!
+}
+
+type UserEdge {
+    node: User!
+    cursor: String!
+}
+
+type AdminUserMetrics {
+    totalActive: Int!
+    totalInactive: Int!
+    newUsersThisWeek: Int!
+    averageOrderValue: Float!
+}
+
+type UserConnection {
+    edges: [UserEdge!]!
+    nodes: [User!]!
+    pageInfo: UserPageInfo!
+    totalCount: Int!
+    isEmpty: Boolean!
+    adminMetrics: AdminUserMetrics!
+}
+
+# ----- Input Types -----
+
+input ProductFilter {
+    category: String
+    minPrice: Float
+    maxPrice: Float
+    minRating: Float
+    brand: String
+    inStockOnly: Boolean
+}
+
+enum ProductSortField {
+    PRICE
+    RATING
+    NAME
+    CREATED_AT
+}
+
+enum SortDirection {
+    ASC
+    DESC
+}
+
+input ProductSort {
+    field: ProductSortField!
+    direction: SortDirection!
+}
+
+input ActivityFilter {
+    activityType: ActivityType
+    userId: ID
+    fromTimestamp: String
+    toTimestamp: String
+}
+
+input UserFilter {
+    status: UserStatus
+    role: String
+    searchTerm: String
+}
+
+enum UserSortField {
+    USERNAME
+    CREATED_AT
+    LAST_LOGIN
+    ORDER_COUNT
+    TOTAL_SPENT
+}
+
+input UserSort {
+    field: UserSortField!
+    direction: SortDirection!
+}
+
+# ----- Root Query -----
+
+type Query {
+    # E-commerce: Offset-based pagination (best for browsable catalogs)
+    products(
+        page: Int = 0
+        size: Int = 10
+        filter: ProductFilter
+        sort: ProductSort
+    ): ProductConnection!
+
+    product(id: ID!): Product
+
+    # Activity Feed: Cursor-based pagination (best for real-time feeds)
+    activityFeed(
+        first: Int = 10
+        after: String
+        filter: ActivityFilter
+    ): ActivityConnection!
+
+    # Admin Users: Offset-based pagination with admin metrics
+    adminUsers(
+        page: Int = 0
+        size: Int = 10
+        filter: UserFilter
+        sort: UserSort
+    ): UserConnection!
+
+    user(id: ID!): User
+
+    # Schema introspection helper
+    paginationStrategies: [String!]!
+}
+
+# ----- Mutations (demo helpers) -----
+input ActivityInput {
+    userId: ID!
+    username: String!
+    activityType: ActivityType!
+    description: String!
+    targetId: String
+    targetName: String
+    metadata: String
+}
+
+type Mutation {
+    # Demo helper: append a new activity (useful to show cursor behaviour)
+    createActivity(
+        userId: ID!
+        username: String!
+        activityType: ActivityType!
+        description: String!
+        targetId: String
+        targetName: String
+        metadata: String
+    ): Activity !
+}
+

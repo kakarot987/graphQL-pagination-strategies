@@ -1,0 +1,13 @@
+
+services:
+  graphql-pagination:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      # Helpful for colored logs when running interactively
+      - SPRING_OUTPUT_ANSI_ENABLED=ALWAYS
+    restart: on-failure
+
