@@ -5,7 +5,13 @@ import com.portfolio.graphql.dto.connection.*;
 import com.portfolio.graphql.dto.filter.FilterTypes.ActivityFilter;
 import com.portfolio.graphql.model.Activity;
 import com.portfolio.graphql.repository.ActivityItemRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
+import com.portfolio.graphql.config.PaginationValidator;
+import org.springframework.data.domain.Page;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -25,6 +31,7 @@ import java.util.List;
 public class ActivityService {
 
     private final ActivityItemRepository activityItemRepository;
+    private final EntityManager entityManager;
 
     /**
      * Seek pagination using a descending, monotonically increasing ID.
@@ -67,9 +74,16 @@ public class ActivityService {
             : filters.and((root, query, cb) -> cb.lessThan(root.<Long>get("id"), cursorId));
 
         // Retrieve one extra record to determine hasNextPage without slicing in memory.
-        List<Activity> fetched = activityItemRepository.findAll(
-            seek, PageRequest.of(0, first + 1, Sort.by(Sort.Direction.DESC, "id"))
-        ).getContent();
+        // A bounded Criteria query avoids the implicit COUNT(*) issued by Page<T>.
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Activity> query = cb.createQuery(Activity.class);
+        Root<Activity> root = query.from(Activity.class);
+        query.select(root)
+            .where(seek.toPredicate(root, query, cb))
+            .orderBy(cb.desc(root.get("id")));
+        List<Activity> fetched = entityManager.createQuery(query)
+            .setMaxResults(first + 1)
+            .getResultList();
         boolean hasNextPage = fetched.size() > first;
         List<Activity> items = hasNextPage ? fetched.subList(0, first) : fetched;
 
@@ -89,9 +103,39 @@ public class ActivityService {
         );
 
         // totalCount is the size of the entire filtered set, independent of the cursor.
-        long totalCount = activityItemRepository.count(filters);
+        long globalCount = activityItemRepository.count();
+        boolean hasFilters = filter != null && (
+            filter.activityType() != null || filter.userId() != null || from != null || to != null);
+        long totalCount = hasFilters ? activityItemRepository.count(filters) : globalCount;
         return new ActivityConnection(
-            edges, items, pageInfo, totalCount, items.isEmpty(), buildFeedMeta()
+            edges, items, pageInfo, totalCount, items.isEmpty(), buildFeedMeta(globalCount)
+        );
+    }
+
+    /**
+     * DEMONSTRATION ONLY: deliberately uses offset pagination on the same live
+     * activity table to make shifted boundaries after inserts observable.
+     */
+    public ActivityConnection getActivityFeedOffset(int pageNumber, int size) {
+        PaginationValidator.validateOffset(pageNumber, size);
+
+        Page<Activity> page = activityItemRepository.findAll(
+            PageRequest.of(pageNumber, size, Sort.by(Sort.Direction.DESC, "id")));
+        List<Activity> items = page.getContent();
+        List<ActivityEdge> edges = items.stream()
+            .map(activity -> new ActivityEdge(
+                activity, CursorUtil.encode("activity", activity.getId()),
+                buildRelationshipNote(activity)))
+            .toList();
+
+        ActivityPageInfo pageInfo = new ActivityPageInfo(
+            page.hasNext(), page.hasPrevious(),
+            edges.isEmpty() ? null : edges.getFirst().cursor(),
+            edges.isEmpty() ? null : edges.getLast().cursor()
+        );
+        return new ActivityConnection(
+            edges, items, pageInfo, page.getTotalElements(),
+            items.isEmpty(), buildFeedMeta(page.getTotalElements())
         );
     }
 
@@ -138,12 +182,11 @@ public class ActivityService {
         };
     }
 
-    private ActivityFeedMeta buildFeedMeta() {
+    private ActivityFeedMeta buildFeedMeta(long globalCount) {
         LocalDateTime oneHourAgo = LocalDateTime.now().minusHours(1);
         long recentCount = activityItemRepository.countSince(oneHourAgo);
         String lastViewed = LocalDateTime.now().minusMinutes(15)
             .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        long total = activityItemRepository.count();
-        return new ActivityFeedMeta(recentCount, lastViewed, total);
+        return new ActivityFeedMeta(recentCount, lastViewed, globalCount);
     }
 }

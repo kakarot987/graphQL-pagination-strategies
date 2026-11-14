@@ -12,6 +12,8 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -72,7 +74,7 @@ public class DataSeeder implements CommandLineRunner {
                 .name(p[0])
                 .category(p[1])
                 .brand(p[2])
-                .price(Double.parseDouble(p[3]))
+                .price(new BigDecimal(p[3]))
                 .rating(Double.parseDouble(p[4]))
                 .description(p[5])
                 .stockCount(random.nextInt(200) + 1)
@@ -120,7 +122,9 @@ public class DataSeeder implements CommandLineRunner {
                 .createdAt(LocalDateTime.now().minusDays(random.nextInt(730)))
                 .lastLoginAt(LocalDateTime.now().minusHours(random.nextInt(720)))
                 .orderCount(orders)
-                .totalSpent(orders * (50 + random.nextDouble() * 450))
+                .totalSpent(BigDecimal.valueOf(orders)
+                    .multiply(BigDecimal.valueOf(50 + random.nextDouble() * 450))
+                    .setScale(2, RoundingMode.HALF_UP))
                 .build());
         }
         userRepository.saveAll(toSave);
