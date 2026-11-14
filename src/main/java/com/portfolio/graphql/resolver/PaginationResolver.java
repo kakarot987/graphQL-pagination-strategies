@@ -84,6 +84,11 @@ public class PaginationResolver {
     }
 
     @QueryMapping
+    public ActivityConnection activityFeedOffset(@Argument Integer page, @Argument Integer size) {
+        return activityService.getActivityFeedOffset(page == null ? 0 : page, size == null ? 10 : size);
+    }
+
+    @QueryMapping
     public List<String> paginationStrategies() {
         return List.of(
             "CURSOR_BASED: Best for real-time feeds, infinite scroll, append-only data",

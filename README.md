@@ -1,103 +1,42 @@
-GraphQL Pagination Demo
-=======================
+# GraphQL Pagination Strategies
 
-Quick demo application that demonstrates two pagination strategies:
-- Cursor-based (activity feed)
-- Offset-based (products catalog, admin users)
+Java 21 / Spring Boot 3.3 / Spring GraphQL / JPA, using H2 by default and optionally PostgreSQL.
 
-Run the app
------------
-From PowerShell in the project root:
+## Run and test
 
-```powershell
-.\gradlew.bat bootRun
+```sh
+./gradlew test
+./gradlew bootRun
+# or docker compose up --build
 ```
 
-Open GraphiQL: http://localhost:8080/graphiql
+Explore queries at http://localhost:8080/graphiql.
 
-Demo sequence (what `demo.ps1` does)
------------------------------------
-1) Fetch the first 5 activities (cursor-based)
-2) Create a new activity via `createActivity` mutation
-3) Fetch the first 5 activities again to show the new activity at the top (cursor stability)
+## Strategies
 
-Example GraphQL queries
------------------------
-Fetch activity feed (first 5):
+- `activityFeed(first: 5, after: "...")` uses a descending-ID cursor, real database-level seek predicate, and `first+1` query limit. The ID represents insertion order, **not timestamp order**. Cursor is Base64(`cursor:activity:ID`), which is encoding rather than encryption/authentication. Malformed or wrong-type cursors return errors.
+- `products(page: 0, size: 10)` and `adminUsers` use offset pagination with deterministic ID sort tie-breakers, but can shift when rows are inserted or removed.
+- `activityFeedOffset(page: 0, size: 5)` is a demonstration-only comparator on the activity data. It is intentionally susceptible to offset drift after a head insertion.
+- Offset `page >= 0`; `size` and cursor `first` are 1–100. Price bounds must be nonnegative, minimum not above maximum, ratings 0–5.
+- Product category facet counts and price-range metadata respect **all active filters** (including category); empty results return no facets and zero price range.
+- Product prices and user total spending persist using `BigDecimal`, while the GraphQL Float fields remain demo-compatible. Production money APIs should use exact decimal strings or minor units.
 
-```graphql
-query($first:Int){
-  activityFeed(first:$first){
-    edges{ cursor node{ id username activityType timestamp description } }
-    pageInfo{ hasNextPage endCursor }
-    feedMeta { unreadCount lastViewedTimestamp totalActivities }
-  }
-}
+## Verify cursor stability
+
+Run `.\\demo.ps1` in PowerShell from the repository root while the server is running. It captures the next pages, inserts a new activity, and asserts that the saved cursor returns the same next page with no duplicates, while the offset page shifts.
+
+## Optional PostgreSQL and performance comparison
+
+```sh
+docker compose --profile postgres up --build -d postgres graphql-postgres
 ```
 
-Create a new activity (mutation):
+The PostgreSQL app is at http://localhost:8081/graphql, while the ordinary H2 service is on port 8080. The [benchmark instructions](benchmark/README.md) generate 250,000 rows and compare indexed keyset versus offset using `EXPLAIN (ANALYZE, BUFFERS)`. No benchmark timings are claimed without an actual run.
 
-```graphql
-mutation($userId:ID!,$username:String!,$activityType:ActivityType!,$description:String!,$targetId:String,$targetName:String,$metadata:String){
-  createActivity(
-    userId:$userId,
-    username:$username,
-    activityType:$activityType,
-    description:$description,
-    targetId:$targetId,
-    targetName:$targetName,
-    metadata:$metadata
-  ){
-    id username activityType timestamp description
-  }
-}
-```
+## Testing
 
-PowerShell demo script
-----------------------
-Run `.	ools\demo.ps1` (or `.
-esources\demo.ps1` depending on placement) while the server is running. The script is also included in the repository as `demo.ps1`.
+CI: `.github/workflows/tests.yml` runs Gradle tests on pull requests and main pushes.
 
-Notes & next steps
-------------------
-- Consider adding `before/last` support for bidirectional cursor pagination.
-- Add keyset (seek) pagination for `products` to compare performance with offset.
-- Add integration tests demonstrating offset inconsistency vs cursor stability.
+## Security disclaimer
 
-Run with Docker
----------------
-You can run the application with a single command using Docker Compose. The repository includes a multi-stage `Dockerfile` that builds the application inside a Gradle builder image and produces a runtime image.
-
-Build and start (foreground):
-
-```powershell
-docker compose up --build
-```
-
-Build and start (detached):
-
-```powershell
-docker compose up --build -d
-```
-
-After the container starts the app is available at http://localhost:8080 and GraphiQL at http://localhost:8080/graphiql
-
-
-
-Pagination input guarantees
----------------------------
-- Offset `page` is zero-based and must be >= 0 for `products` and `adminUsers`.
-- Offset `size` must be between 1 and 100. Cursor feed `first` must be between 1 and 100.
-- Product `minPrice` and `maxPrice` must be non-negative, with `minPrice <= maxPrice`.
-  `minRating` must be between 0 and 5.
-- Offset queries sort by the selected field and use ascending `id` to break ties.
-  This makes ordering deterministic for a given dataset, but *does not* make
-  offset pagination stable when earlier rows are inserted or deleted.
-- `activityFeed` seeks by descending ID (insertion order, not timestamp).
-  It rejects malformed/wrong-type cursors instead of resetting to page one.
-
-Tests and CI
-------------
-Run locally with `./gradlew test` (or `.\\gradlew.bat test` on PowerShell).
-GitHub Actions runs unit and GraphQL integration tests on pull requests and
-pushes to `main`.
+**Educational demo only.** Admin endpoints and mutation have no authentication or authorization. GraphiQL, H2 console, introspection, demo credentials and permissive development settings are not suitable for production. PostgreSQL demo profile uses `create-drop`. Secure these before any public deployment, including access control, migration management, credentials and rate limits. Cursors are not signed, so clients can construct valid IDs; add tamper protection if needed.

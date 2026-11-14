@@ -234,6 +234,9 @@ type Query {
         filter: ActivityFilter
     ): ActivityConnection!
 
+    # Demonstration only: offset pagination on the live activity feed.
+    activityFeedOffset(page: Int = 0, size: Int = 10): ActivityConnection!
+
     # Admin Users: Offset-based pagination with admin metrics
     adminUsers(
         page: Int = 0

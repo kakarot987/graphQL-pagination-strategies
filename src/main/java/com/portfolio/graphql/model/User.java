@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "users")
@@ -44,8 +45,8 @@ public class User {
     @Column(nullable = false)
     private Integer orderCount;
 
-    @Column(nullable = false)
-    private Double totalSpent;
+    @Column(nullable = false, precision = 18, scale = 2)
+    private BigDecimal totalSpent;
 
     public enum UserStatus {
         ACTIVE, INACTIVE, SUSPENDED, PENDING
