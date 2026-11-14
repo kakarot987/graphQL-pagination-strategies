@@ -1,6 +1,7 @@
 package com.portfolio.graphql.service;
 
 import com.portfolio.graphql.config.CursorUtil;
+import com.portfolio.graphql.config.PaginationValidator;
 import com.portfolio.graphql.dto.connection.*;
 import com.portfolio.graphql.dto.filter.FilterTypes.*;
 import com.portfolio.graphql.model.User;
@@ -31,6 +32,7 @@ public class UserService {
      * Admin dashboards benefit from: total counts, jumping to any page, status breakdowns.
      */
     public UserConnection getAdminUsers(int page, int size, UserFilter filter, UserSort sort) {
+        PaginationValidator.validateOffset(page, size);
         log.info("Fetching admin users: page={}, size={}", page, size);
 
         PageRequest pageable = PageRequest.of(page, size, buildSort(sort));
@@ -69,7 +71,10 @@ public class UserService {
     }
 
     private Sort buildSort(UserSort sort) {
-        if (sort == null) return Sort.by(Sort.Direction.ASC, "username");
+        if (sort == null) {
+            return Sort.by(Sort.Direction.ASC, "username").and(Sort.by(Sort.Direction.ASC, "id"));
+        }
+
         String field = switch (sort.field()) {
             case USERNAME -> "username";
             case CREATED_AT -> "createdAt";
@@ -77,9 +82,11 @@ public class UserService {
             case ORDER_COUNT -> "orderCount";
             case TOTAL_SPENT -> "totalSpent";
         };
-        return sort.direction() == SortDirection.ASC
-            ? Sort.by(Sort.Direction.ASC, field)
-            : Sort.by(Sort.Direction.DESC, field);
+        Sort.Direction direction = sort.direction() == SortDirection.ASC
+            ? Sort.Direction.ASC : Sort.Direction.DESC;
+
+        // Break ties consistently even when many users have the same metric.
+        return Sort.by(direction, field).and(Sort.by(Sort.Direction.ASC, "id"));
     }
 
     private Specification<User> buildSpecification(UserFilter filter) {

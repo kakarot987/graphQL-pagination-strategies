@@ -83,3 +83,21 @@ docker compose up --build -d
 After the container starts the app is available at http://localhost:8080 and GraphiQL at http://localhost:8080/graphiql
 
 
+
+Pagination input guarantees
+---------------------------
+- Offset `page` is zero-based and must be >= 0 for `products` and `adminUsers`.
+- Offset `size` must be between 1 and 100. Cursor feed `first` must be between 1 and 100.
+- Product `minPrice` and `maxPrice` must be non-negative, with `minPrice <= maxPrice`.
+  `minRating` must be between 0 and 5.
+- Offset queries sort by the selected field and use ascending `id` to break ties.
+  This makes ordering deterministic for a given dataset, but *does not* make
+  offset pagination stable when earlier rows are inserted or deleted.
+- `activityFeed` seeks by descending ID (insertion order, not timestamp).
+  It rejects malformed/wrong-type cursors instead of resetting to page one.
+
+Tests and CI
+------------
+Run locally with `./gradlew test` (or `.\\gradlew.bat test` on PowerShell).
+GitHub Actions runs unit and GraphQL integration tests on pull requests and
+pushes to `main`.
