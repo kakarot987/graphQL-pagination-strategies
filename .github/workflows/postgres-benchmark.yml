@@ -1,0 +1,53 @@
+name: PostgreSQL benchmark and GraphQL smoke
+
+on:
+  pull_request:
+    paths:
+      - "benchmark/**"
+      - ".github/workflows/postgres-benchmark.yml"
+      - "docker-compose.yml"
+      - "Dockerfile"
+      - "build.gradle"
+      - "src/main/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start disposable PostgreSQL
+        run: docker compose --profile postgres up -d --wait postgres
+
+      - name: Generate indexed dataset
+        run: docker compose --profile postgres exec -T postgres psql -v ON_ERROR_STOP=1 -U pagination -d pagination < benchmark/01_seed.sql
+
+      - name: Run repeated EXPLAIN ANALYZE and verify matching pages
+        run: python3 benchmark/run_benchmark.py
+
+      - name: Start PostgreSQL-backed Spring GraphQL
+        run: docker compose --profile postgres up --build -d graphql-postgres
+
+      - name: Smoke-test GraphQL responses
+        run: python3 benchmark/smoke_postgres.py
+
+      - name: Upload measured results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-benchmark-results
+          path: benchmark/results/
+          if-no-files-found: warn
+
+      - name: Show logs if unsuccessful
+        if: failure()
+        run: docker compose --profile postgres logs --tail=100 postgres graphql-postgres
+
+      - name: Tear down disposable database
+        if: always()
+        run: docker compose --profile postgres down -v --remove-orphans
