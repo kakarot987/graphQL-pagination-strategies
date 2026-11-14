@@ -2,18 +2,21 @@ package com.portfolio.graphql.service;
 
 import com.portfolio.graphql.config.CursorUtil;
 import com.portfolio.graphql.dto.connection.*;
-import com.portfolio.graphql.dto.filter.FilterTypes.*;
+import com.portfolio.graphql.dto.filter.FilterTypes.ActivityFilter;
 import com.portfolio.graphql.model.Activity;
 import com.portfolio.graphql.repository.ActivityItemRepository;
+import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -24,76 +27,81 @@ public class ActivityService {
     private final ActivityItemRepository activityItemRepository;
 
     /**
-     * Cursor-based pagination — ideal for real-time activity feeds.
-     *
-     * Why cursor over offset here:
-     * - New activities are constantly appended
-     * - Offset pagination would cause skipped/duplicate items when new items arrive
-     * - Cursor is stable: "give me items before ID=X" is deterministic
-     *
-     * Cursor strategy: cursor = base64("cursor:activity:ID")
-     * We fetch items with ID < cursor_id, newest first
+     * Seek pagination using a descending, monotonically increasing ID.
+     * Filters and cursor constraints are applied inside the database query.
+     * The cursor represents insertion order, not the activity timestamp.
      */
     public ActivityConnection getActivityFeed(int first, String afterCursor, ActivityFilter filter) {
-        log.info("Fetching activity feed: first={}, after={}", first, afterCursor);
-
-        // Fetch one extra to determine hasNextPage
-        PageRequest pageable = PageRequest.of(0, first + 1, Sort.by(Sort.Direction.DESC, "id"));
-
-        Page<Activity> page;
-        if (afterCursor != null && CursorUtil.isValid(afterCursor)) {
-            Long cursorId = CursorUtil.decode(afterCursor);
-            page = activityItemRepository.findByIdLessThanOrderByIdDesc(cursorId, pageable);
-        } else {
-            page = activityItemRepository.findAllByOrderByIdDesc(pageable);
+        if (first < 1 || first > 100) {
+            throw new IllegalArgumentException("first must be between 1 and 100");
         }
 
-        List<Activity> items = page.getContent();
-        boolean hasNextPage = items.size() > first;
+        Long cursorId = afterCursor == null ? null : CursorUtil.decode(afterCursor, "activity");
+        LocalDateTime from = parseTimestamp(filter == null ? null : filter.fromTimestamp(), "fromTimestamp");
+        LocalDateTime to = parseTimestamp(filter == null ? null : filter.toTimestamp(), "toTimestamp");
+        if (from != null && to != null && from.isAfter(to)) {
+            throw new IllegalArgumentException("fromTimestamp must not be after toTimestamp");
+        }
 
-        // Trim to requested size
-        List<Activity> resultItems = hasNextPage ? items.subList(0, first) : items;
+        Specification<Activity> filters = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (filter != null) {
+                if (filter.activityType() != null) {
+                    predicates.add(cb.equal(root.get("activityType"), filter.activityType()));
+                }
+                if (filter.userId() != null) {
+                    predicates.add(cb.equal(root.get("userId"), filter.userId()));
+                }
+            }
+            if (from != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.<LocalDateTime>get("timestamp"), from));
+            }
+            if (to != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.<LocalDateTime>get("timestamp"), to));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
 
-        List<ActivityEdge> edges = resultItems.stream()
-            .map(a -> new ActivityEdge(
-                a,
-                CursorUtil.encode("activity", a.getId()),
-                buildRelationshipNote(a)   // relationship metadata pattern
+        Specification<Activity> seek = cursorId == null
+            ? filters
+            : filters.and((root, query, cb) -> cb.lessThan(root.<Long>get("id"), cursorId));
+
+        // Retrieve one extra record to determine hasNextPage without slicing in memory.
+        List<Activity> fetched = activityItemRepository.findAll(
+            seek, PageRequest.of(0, first + 1, Sort.by(Sort.Direction.DESC, "id"))
+        ).getContent();
+        boolean hasNextPage = fetched.size() > first;
+        List<Activity> items = hasNextPage ? fetched.subList(0, first) : fetched;
+
+        List<ActivityEdge> edges = items.stream()
+            .map(activity -> new ActivityEdge(
+                activity,
+                CursorUtil.encode("activity", activity.getId()),
+                buildRelationshipNote(activity)
             ))
             .toList();
 
         ActivityPageInfo pageInfo = new ActivityPageInfo(
             hasNextPage,
-            afterCursor != null,
+            cursorId != null,
             edges.isEmpty() ? null : edges.getFirst().cursor(),
             edges.isEmpty() ? null : edges.getLast().cursor()
         );
 
-        // Feed-specific metadata
-        ActivityFeedMeta feedMeta = buildFeedMeta();
-
-        long totalCount = activityItemRepository.count();
-
+        // totalCount is the size of the entire filtered set, independent of the cursor.
+        long totalCount = activityItemRepository.count(filters);
         return new ActivityConnection(
-            edges,
-            resultItems,
-            pageInfo,
-            totalCount,
-            resultItems.isEmpty(),
-            feedMeta
+            edges, items, pageInfo, totalCount, items.isEmpty(), buildFeedMeta()
         );
     }
 
-    /**
-     * Create and persist a new Activity. Used as a demo helper (mutation).
-     */
     public Activity createActivity(Long userId,
-                                       String username,
-                                       Activity.ActivityType activityType,
-                                       String description,
-                                       String targetId,
-                                       String targetName,
-                                       String metadata) {
+                                   String username,
+                                   Activity.ActivityType activityType,
+                                   String description,
+                                   String targetId,
+                                   String targetName,
+                                   String metadata) {
         Activity activity = Activity.builder()
             .userId(userId)
             .username(username)
@@ -108,8 +116,18 @@ public class ActivityService {
         return activityItemRepository.save(activity);
     }
 
+    private static LocalDateTime parseTimestamp(String value, String argument) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return LocalDateTime.parse(value, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        } catch (DateTimeParseException ex) {
+            throw new IllegalArgumentException(argument + " must be an ISO-8601 local date-time", ex);
+        }
+    }
+
     private String buildRelationshipNote(Activity activity) {
-        // Demonstrates: relationship metadata pattern
         return switch (activity.getActivityType()) {
             case PURCHASE -> "Transaction completed";
             case REVIEW -> "Community contribution";
