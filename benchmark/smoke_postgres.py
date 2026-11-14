@@ -53,13 +53,14 @@ def check() -> None:
 
 
 if __name__ == "__main__":
-    last_error: Exception | None = None
     for attempt in range(60):
         try:
             check()
             break
-        except (urllib.error.URLError, TimeoutError, AssertionError, ValueError) as error:
-            last_error = error
+        # Early startup can close an accepted connection, raising ConnectionResetError
+        # (an OSError, not necessarily a urllib.error.URLError). Retry while
+        # the Spring Boot container initializes.
+        except (OSError, AssertionError, ValueError) as error:
             if attempt == 59:
                 raise SystemExit(f"POSTGRES_GRAPHQL_SMOKE_FAIL: {error}") from error
             time.sleep(5)
