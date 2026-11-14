@@ -1,6 +1,7 @@
 package com.portfolio.graphql.service;
 
 import com.portfolio.graphql.config.CursorUtil;
+import com.portfolio.graphql.config.PaginationValidator;
 import com.portfolio.graphql.dto.connection.*;
 import com.portfolio.graphql.dto.filter.FilterTypes.*;
 import com.portfolio.graphql.model.Product;
@@ -31,6 +32,8 @@ public class ProductService {
      * Clients can jump to any page and see total page count.
      */
     public ProductConnection getProducts(int page, int size, ProductFilter filter, ProductSort sort) {
+        PaginationValidator.validateOffset(page, size);
+        PaginationValidator.validateProductFilter(filter);
         log.info("Fetching products: page={}, size={}, filter={}", page, size, filter);
 
         Pageable pageable = PageRequest.of(page, size, buildSort(sort));
@@ -76,16 +79,21 @@ public class ProductService {
     // ---- Private helpers ----
 
     private Sort buildSort(ProductSort sort) {
-        if (sort == null) return Sort.by(Sort.Direction.ASC, "name");
+        if (sort == null) {
+            return Sort.by(Sort.Direction.ASC, "name").and(Sort.by(Sort.Direction.ASC, "id"));
+        }
+
         String field = switch (sort.field()) {
             case PRICE -> "price";
             case RATING -> "rating";
             case NAME -> "name";
             case CREATED_AT -> "createdAt";
         };
-        return sort.direction() == SortDirection.ASC
-            ? Sort.by(Sort.Direction.ASC, field)
-            : Sort.by(Sort.Direction.DESC, field);
+        Sort.Direction direction = sort.direction() == SortDirection.ASC
+            ? Sort.Direction.ASC : Sort.Direction.DESC;
+
+        // A unique tie-breaker prevents equal sort values from changing page boundaries.
+        return Sort.by(direction, field).and(Sort.by(Sort.Direction.ASC, "id"));
     }
 
     private Specification<Product> buildSpecification(ProductFilter filter) {
